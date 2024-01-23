@@ -1,0 +1,268 @@
+---
+title: "Callose Phenotype Analysis"
+output: html_document
+date: "2023-02-18"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Libraries
+
+```{r, message=FALSE, warning=FALSE}
+## Clear all objects, including hidden objects.
+rm(list = ls(all.names = TRUE))
+
+## Load necessary libraries
+library(ggplot2)        # For data visualization
+library(dplyr)          # For data manipulation
+library(MASS)           # For multivariate analysis
+library(reshape2)       # For reshaping data
+library(reshape)        # For reshaping data
+library(multcompView)   # For multiple comparisons
+library(DescTools)      # For descriptive statistics
+library(ggpubr)         # For combining ggplot2 plots
+library(rcompanion)     # For statistical tools and functions
+library(car)            # For companion to applied regression
+```
+## Load Data
+
+```{r}
+## Read in data with a relative path
+callose_data <- read.csv("C:/Users/bryce/OneDrive - UW-Madison/Rakotondrafara Lab/Callose_for_R.csv", sep=",", header=TRUE, fileEncoding="UTF-8-BOM")
+
+## Name columns using snake_case
+names(callose_data) <- c("well", "image_group", "experiment", "plate", "roi_count", "image_area_mm", "count_per_mm", "sample_no", "cultivar", "plant", "plasmid", "treatment", "condition", "temperature")
+
+## Convert 'Condition' to a factor
+callose_data$condition <- factor(callose_data$condition)
+
+## Filter to target plasmids using %in%
+target_plasmids <- c("Agro", "HCProO", "HCProN", "HCProO S247A", "HCProN A247S")
+callose_data <- dplyr::filter(callose_data, plasmid %in% target_plasmids)
+
+## Filter by experiment
+callose_data <- dplyr::filter(callose_data, experiment == "Exp 111522-1")
+
+## Remove outliers using boxplot method
+outliers <- boxplot(callose_data$count_per_mm, plot=FALSE)$out
+callose_data <- callose_data[!callose_data$count_per_mm %in% outliers,]
+
+## Save the original dataset
+callose_data_original <- callose_data
+```
+
+## Normality Assessment
+
+```{r}
+## Copy the original data to a new variable
+callose_data <- callose_data_original
+
+## Histogram
+hist(callose_data$count_per_mm, xlab = "Count per mm", col = "lightblue", border = "black")
+
+## QQ Plot
+qqnorm(callose_data$count_per_mm, pch = 1, frame = FALSE)
+qqline(callose_data$count_per_mm, col = "steelblue", lwd = 2)
+
+## Shapiro-Wilk Test for Normality
+shapiro_test_result <- shapiro.test(callose_data$count_per_mm)
+shapiro_test_result
+
+## Homogeneity of Variance Test
+levene_test_result <- leveneTest(count_per_mm ~ condition, data = callose_data)
+levene_test_result
+```
+
+## Set Level Order
+
+```{r}
+level_order <- c("Agro", "HCProO", "HCProN", "HCProO S247A", "HCProN A247S")
+```
+
+## Set Figure Parameters
+
+```{r}
+## Pull max value
+max_count <- max(callose_data$count_per_mm)
+
+## Define plot text size 
+plot_text_size <- 12
+```
+
+## H2O Treatment Plot
+
+```{r}
+## Filter data for H2O treatment
+h2o_treatment_data <- filter(callose_data_original, treatment == "H2O")
+
+## Set order
+h2o_treatment_data$plasmid <- factor(h2o_treatment_data$plasmid, levels = level_order)
+
+## Get means for each trial (experimental replicate)
+exp_means_h2o <- aggregate(count_per_mm ~ condition + plant + sample_no + treatment + plasmid + experiment, data = h2o_treatment_data, FUN = mean)
+
+## Count trials (experimental replicates)
+num_exp_h2o <- as.data.frame(table(exp_means_h2o$condition))
+names(num_exp_h2o) <- c("condition", "count")
+
+## Get mean of trials (experimental replicates) 
+pop_means_h2o <- aggregate(count_per_mm ~ condition + treatment + plasmid, data = exp_means_h2o, FUN = mean)
+names(pop_means_h2o) <- c("condition", "treatment", "plasmid", "mean")
+
+## SD of of trial (experimental replicate) means 
+pop_sd_h2o <- aggregate(count_per_mm ~ condition, data = exp_means_h2o, FUN = sd)
+names(pop_sd_h2o) <- c("condition", "sd")
+
+## Merge dataframes
+pop_stats_h2o <- merge(pop_means_h2o, pop_sd_h2o, by = "condition")
+pop_stats_h2o <- merge(pop_stats_h2o, num_exp_h2o, by = "condition") 
+pop_stats_h2o$plasmid <- factor(pop_stats_h2o$plasmid, levels = level_order)
+
+## Define x-axis labels
+x_axis_labels_h2o <- c(
+  expression(bold("Agro + H2O")),
+  expression(bold("HCPro"^"O" ~ "+ H2O")),
+  expression(bold("HCPro"^"N" ~ "+ H2O")),
+  expression(bold("HCPro"^"O S247A" ~ "+ H2O")),
+  expression(bold("HCPro"^"N A247S" ~ "+ H2O"))
+)
+
+pr_h2o_box_fig <- ggplot(exp_means_h2o) +
+  geom_boxplot(
+    aes(x = plasmid, y = count_per_mm),
+    color = "black",
+    fill = "gray",
+    outlier.shape = NA
+  ) +
+  geom_dotplot(
+    data = h2o_treatment_data,
+    aes(x = plasmid, y = count_per_mm),
+    binaxis = 'y',
+    stackdir = 'center',
+    fill = "black",
+    binwidth = 2
+  ) +
+  theme_classic() +
+  labs(y = expression(bold("Callose Spots/mm"^"2"))) +
+  scale_x_discrete(labels = x_axis_labels_h2o) +
+  ylim(0, max_count + 10) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = plot_text_size, color = "black"),
+    axis.text.y = element_text(face = "bold", size = plot_text_size, color = "black"),
+    legend.position = "none",
+    axis.title.y = element_text(margin = margin(r = 10), size = plot_text_size),
+    axis.title.x = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) 
+
+pr_h2o_box_fig
+```
+
+## flg22 Treatment Plot
+
+```{r}
+## Filter data for flg22 treatment
+flg22_treatment_data <- filter(callose_data_original, treatment == "flg22")
+
+## Set order
+flg22_treatment_data$plasmid <- factor(flg22_treatment_data$plasmid, levels = level_order)
+
+## Get means for each trial (experimental replicate)
+exp_means_flg22 <- aggregate(count_per_mm ~ condition + plant + sample_no + treatment + plasmid + experiment, data = flg22_treatment_data, FUN = mean)
+
+## Count trials (experimental replicates)
+num_exp_flg22 <- as.data.frame(table(exp_means_flg22$condition))
+names(num_exp_flg22) <- c("condition", "count")
+
+## Get mean of trials (experimental replicates) 
+pop_means_flg22 <- aggregate(count_per_mm ~ condition + treatment + plasmid, data = exp_means_flg22, FUN = mean)
+names(pop_means_flg22) <- c("condition", "treatment", "plasmid", "mean")
+
+## SD of of trial (experimental replicate) means 
+pop_sd_flg22 <- aggregate(count_per_mm ~ condition, data = exp_means_flg22, FUN = sd)
+names(pop_sd_flg22) <- c("condition", "sd")
+
+## Merge dataframes
+pop_stats_flg22 <- merge(pop_means_flg22, pop_sd_flg22, by = "condition")
+pop_stats_flg22 <- merge(pop_stats_flg22, num_exp_flg22, by = "condition") 
+pop_stats_flg22$plasmid <- factor(pop_stats_flg22$plasmid, levels = level_order)
+
+## Define plot text size 
+plot_text_size_flg22 <- 12
+
+## Define x-axis labels
+x_axis_labels_flg22 <- c(
+  expression(bold("Agro + flg22")),
+  expression(bold("HCPro"^"O" ~ "+ flg22")),
+  expression(bold("HCPro"^"N" ~ "+ flg22")),
+  expression(bold("HCPro"^"O S247A" ~ "+ flg22")),
+  expression(bold("HCPro"^"N A247S" ~ "+ flg22"))
+)
+
+pr_flg22_box_fig <- ggplot(exp_means_flg22) +
+  geom_boxplot(
+    aes(x = plasmid, y = count_per_mm),
+    color = "black",
+    fill = "gray",
+    outlier.shape = NA
+  ) +
+  geom_dotplot(
+    data = flg22_treatment_data,
+    aes(x = plasmid, y = count_per_mm),
+    binaxis = 'y',
+    stackdir = 'center',
+    fill = "black",
+    binwidth = 2
+  ) +
+  theme_classic() +
+  labs(y = expression(bold("Callose Spots/mm"^"2"))) +
+  scale_x_discrete(labels = x_axis_labels_flg22) +
+  ylim(0, max_count + 10) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = plot_text_size, color = "black"),
+    axis.text.y = element_text(face = "bold", size = plot_text_size, color = "black"),
+    legend.position = "none",
+    axis.title.y = element_text(margin = margin(r = 10), size = plot_text_size),
+    axis.title.x = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) 
+
+pr_flg22_box_fig
+```
+
+## Statistical tests for H2O Treatment
+
+```{r}
+## Kruskal-Wallis test
+kruskal_test_result <- kruskal.test(count_per_mm ~ condition, data = h2o_treatment_data)
+kruskal_test_result
+
+## Dunn's Test with Bonferroni correction
+dunn_test_result <- dunnTest(count_per_mm ~ condition, data = h2o_treatment_data, method = "bonferroni")
+pairwise_comparison_table <- dunn_test_result$res
+pairwise_comparison_table
+
+## Display compact letter display (CLD)
+cld_list <- cldList(P.adj ~ Comparison, data = pairwise_comparison_table, threshold = 0.05)
+cld_list
+```
+## Statistical tests for flg22 Treatment
+
+```{r}
+## Kruskal-Wallis test
+kruskal_test_result <- kruskal.test(count_per_mm ~ condition, data = flg22_treatment_data)
+kruskal_test_result
+
+## Dunn's Test with Bonferroni correction
+dunn_test_result <- dunnTest(count_per_mm ~ condition, data = flg22_treatment_data, method = "bonferroni")
+pairwise_comparison_table <- dunn_test_result$res
+pairwise_comparison_table
+
+## Display compact letter display (CLD)
+cld_list <- cldList(P.adj ~ Comparison, data = pairwise_comparison_table, threshold = 0.05)
+cld_list
+```
